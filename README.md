@@ -2,6 +2,8 @@
 
 NASA's Astronomy Picture of the Day, rendered directly in your terminal.
 
+<img width="1363" height="766" alt="APOD 2026-01-31" src="https://github.com/user-attachments/assets/ca981b3f-41a4-4af2-8aa3-2fd302efc13b" />
+
 
 ## Features
 
@@ -22,13 +24,13 @@ pip install astra-apod
 ```
 astra                              # Today's APOD
 astra today                        # Same as above
-astra date 2021-08-14            # APOD for a specific date
+astra date 2021-08-14              # APOD for a specific date
 astra random                       # Random APOD 
 astra info                         # Full explanation of last viewed APOD
 astra config --show                # Show current configuration
 astra config --size full           # Full terminal width image
 astra config --size default        # 60% terminal width image 
-astra config --bg "#0c0c0c"      # Set background color manually
+astra config --bg "#0c0c0c"        # Set background color manually
 astra config --reset               # Reset all settings to defaults
 ```
 
