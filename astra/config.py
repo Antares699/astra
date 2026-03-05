@@ -1,0 +1,254 @@
+"""Config management for Astra"""
+
+import json
+import sys
+from pathlib import Path
+
+CONFIG_DIR = Path.home() / ".astra"
+CONFIG_FILE = CONFIG_DIR / "config.json"
+LAST_APOD_FILE = CONFIG_DIR / "last.json"
+
+DEFAULT_CONFIG = {
+    "size": "default",
+    "bg": None,
+    "greeter": False,
+    "greeter_freq": "daily",
+    "api_key": None,
+    "greeter_last_run": None,
+}
+
+GREETER_TAG = "# astra-greeter"
+
+# Shell-specific greeter lines
+SHELL_LINES = {
+    "cmd": "astra greet",
+    "powershell": f"if (Get-Command astra -ErrorAction SilentlyContinue) {{ astra greet }}  {GREETER_TAG}",
+    "bash": f"command -v astra >/dev/null 2>&1 && astra greet  {GREETER_TAG}",
+    "zsh": f"command -v astra >/dev/null 2>&1 && astra greet  {GREETER_TAG}",
+    "fish": f"command -v astra &>/dev/null; and astra greet  {GREETER_TAG}",
+}
+
+VALID_SHELLS = list(SHELL_LINES.keys())
+WINDOWS_ONLY_SHELLS = {"cmd"}
+POSIX_ONLY_SHELLS = {"zsh", "fish"}
+
+
+def get_config_path() -> Path:
+    """Return the path to the config file"""
+    return CONFIG_FILE
+
+
+def load_config() -> dict:
+    """Load config from file, creating default if it doesnt exist"""
+    if not CONFIG_FILE.exists():
+        save_config(DEFAULT_CONFIG)
+        return DEFAULT_CONFIG.copy()
+
+    try:
+        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            config = json.load(f)
+        # Merge with defaults to handle missing keys
+        return {**DEFAULT_CONFIG, **config}
+    except (json.JSONDecodeError, IOError):
+        return DEFAULT_CONFIG.copy()
+
+
+def save_config(config: dict) -> None:
+    """Save config to file"""
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+        json.dump(config, f, indent=2)
+        f.write("\n")
+
+
+def save_last_apod(data: dict) -> None:
+    """Save the last viewed APOD data"""
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    with open(LAST_APOD_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+        f.write("\n")
+
+
+def load_last_apod() -> dict | None:
+    """Load the last viewed APOD data. Returns None if not found"""
+    if not LAST_APOD_FILE.exists():
+        return None
+    try:
+        with open(LAST_APOD_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, IOError):
+        return None
+
+
+def _get_profile_path(shell: str) -> Path | None:
+    """Return the profile file path for a given shell. None if not applicable"""
+    if shell == "cmd":
+        return None  # CMD uses registry
+    if shell == "powershell":
+        return (
+            Path.home()
+            / "Documents"
+            / "WindowsPowerShell"
+            / "Microsoft.PowerShell_profile.ps1"
+        )
+    if shell == "bash":
+        if sys.platform == "darwin":
+            return Path.home() / ".bash_profile"
+        return Path.home() / ".bashrc"
+    if shell == "zsh":
+        return Path.home() / ".zshrc"
+    if shell == "fish":
+        return Path.home() / ".config" / "fish" / "config.fish"
+    return None
+
+
+def _get_ps7_profile_path() -> Path:
+    return Path.home() / "Documents" / "PowerShell" / "Microsoft.PowerShell_profile.ps1"
+
+
+def _install_to_profile(profile_path: Path, line: str) -> None:
+    """Append the greeter line to a shell profile file if not already present"""
+    profile_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if profile_path.exists():
+        content = profile_path.read_text(encoding="utf-8")
+        if GREETER_TAG in content:
+            return  # Already installed
+    else:
+        content = ""
+
+    separator = "\n" if content and not content.endswith("\n") else ""
+    with open(profile_path, "a", encoding="utf-8") as f:
+        f.write(f"{separator}{line}\n")
+
+
+def _uninstall_from_profile(profile_path: Path) -> None:
+    """Remove the greeter line from a shell profile file"""
+    if not profile_path.exists():
+        return
+
+    content = profile_path.read_text(encoding="utf-8")
+    if GREETER_TAG not in content:
+        return
+
+    lines = content.splitlines()
+    filtered = [ln for ln in lines if GREETER_TAG not in ln]
+    while filtered and filtered[-1] == "":
+        filtered.pop()
+    profile_path.write_text(
+        "\n".join(filtered) + "\n" if filtered else "", encoding="utf-8"
+    )
+
+
+def _install_cmd_autorun() -> None:
+    """Add 'astra greet' to CMD's AutoRun registry key"""
+    import winreg
+
+    key_path = r"Software\Microsoft\Command Processor"
+    greeter_cmd = SHELL_LINES["cmd"]
+
+    try:
+        key = winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_READ | winreg.KEY_WRITE
+        )
+    except FileNotFoundError:
+        key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path)
+
+    try:
+        existing, _ = winreg.QueryValueEx(key, "AutoRun")
+    except FileNotFoundError:
+        existing = ""
+
+    if greeter_cmd in existing:
+        winreg.CloseKey(key)
+        return  # Already installed
+
+    if existing:
+        new_value = f"{existing} & {greeter_cmd}"
+    else:
+        new_value = greeter_cmd
+
+    winreg.SetValueEx(key, "AutoRun", 0, winreg.REG_SZ, new_value)
+    winreg.CloseKey(key)
+
+
+def _uninstall_cmd_autorun() -> None:
+    """Remove astra greet from CMD's AutoRun registry key"""
+    import winreg
+
+    key_path = r"Software\Microsoft\Command Processor"
+    greeter_cmd = SHELL_LINES["cmd"]
+
+    try:
+        key = winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_READ | winreg.KEY_WRITE
+        )
+    except FileNotFoundError:
+        return
+
+    try:
+        existing, _ = winreg.QueryValueEx(key, "AutoRun")
+    except FileNotFoundError:
+        winreg.CloseKey(key)
+        return
+
+    if greeter_cmd not in existing:
+        winreg.CloseKey(key)
+        return
+
+    new_value = existing.replace(f" & {greeter_cmd}", "")
+    new_value = new_value.replace(f"{greeter_cmd} & ", "")
+    new_value = new_value.replace(greeter_cmd, "")
+    new_value = new_value.strip()
+
+    if new_value:
+        winreg.SetValueEx(key, "AutoRun", 0, winreg.REG_SZ, new_value)
+    else:
+        winreg.DeleteValue(key, "AutoRun")
+
+    winreg.CloseKey(key)
+
+
+def validate_shell(shell: str) -> str | None:
+    """Validate shell choice for current OS. Returns error message or None if valid"""
+    if shell not in VALID_SHELLS:
+        return f"Unknown shell '{shell}'. Valid options: {', '.join(VALID_SHELLS)}"
+    if shell in WINDOWS_ONLY_SHELLS and sys.platform != "win32":
+        return f"'{shell}' is only available on Windows."
+    if shell in POSIX_ONLY_SHELLS and sys.platform == "win32":
+        return f"'{shell}' is not available on Windows."
+    return None
+
+
+def install_greeter(shell: str) -> None:
+    """Install the greeter into a shell's startup configuration"""
+    if shell == "cmd":
+        _install_cmd_autorun()
+        return
+
+    line = SHELL_LINES[shell]
+
+    if shell == "powershell":
+        _install_to_profile(_get_profile_path("powershell"), line)
+        _install_to_profile(_get_ps7_profile_path(), line)
+        return
+
+    profile_path = _get_profile_path(shell)
+    if profile_path:
+        _install_to_profile(profile_path, line)
+
+
+def uninstall_greeter(shell: str) -> None:
+    """Remove the greeter from a shell's startup configuration"""
+    if shell == "cmd":
+        _uninstall_cmd_autorun()
+        return
+
+    if shell == "powershell":
+        _uninstall_from_profile(_get_profile_path("powershell"))
+        _uninstall_from_profile(_get_ps7_profile_path())
+        return
+
+    profile_path = _get_profile_path(shell)
+    if profile_path:
+        _uninstall_from_profile(profile_path)
