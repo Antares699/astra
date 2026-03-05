@@ -8,6 +8,10 @@ version = "0.1.0"
 description = "A NASA Astronomy Picture of the Day CLI tool."
 requires-python = ">=3.10"
 license = { text = "MIT" }
+readme = "README.md"
+authors = [
+    { name = "Asutosh Shrestha" },
+]
 dependencies = [
     "typer>=0.9.0",
     "rich>=13.0.0",
@@ -15,6 +19,10 @@ dependencies = [
     "Pillow>=9.0.0",
     "numpy>=1.24.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/Antares699/astra"
+Repository = "https://github.com/Antares699/astra"
 
 [project.scripts]
 astra = "astra.cli:app"
