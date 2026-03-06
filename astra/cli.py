@@ -449,7 +449,7 @@ def config_cmd(
     save_dir: str = typer.Option(
         None, "--save-dir", help="Set default save directory for images."
     ),
-    clear_cache: bool = typer.Option(
+    do_clear_cache: bool = typer.Option(
         False, "--clear-cache", help="Clear all cached images."
     ),
     reset: bool = typer.Option(False, "--reset", help="Reset config to defaults."),
@@ -472,7 +472,7 @@ def config_cmd(
         console.print("[green]Config reset to defaults.[/green]")
         return
 
-    if clear_cache:
+    if do_clear_cache:
         deleted, freed = clear_cache()
         freed_mb = freed / (1024 * 1024)
         console.print(
