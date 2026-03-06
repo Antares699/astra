@@ -12,6 +12,8 @@ NASA's Astronomy Picture of the Day, rendered directly in your terminal.
 - Works with Windows Terminal, Ghostty, Kitty, WezTerm, Alacritty, and more
 - Terminal greeter — show today's APOD when you open your shell
 - Browse by date, view random APODs, read full explanations
+- Search all APOD titles from APOD Archive
+- Save HD images of APODs
 
 ## Install
 
@@ -26,11 +28,21 @@ astra                              # Today's APOD
 astra today                        # Same as above
 astra date 2021-08-14              # APOD for a specific date
 astra random                       # Random APOD 
+astra search <title>               # Search APOD archive by title 
 astra info                         # Full explanation of last viewed APOD
+astra save                         # Save last viewed APOD
+```
+
+## Configuration
+
+```
 astra config --show                # Show current configuration
+astra config --api-key <key>       # Set NASA API key
 astra config --size full           # Full terminal width image
 astra config --size default        # 60% terminal width image 
 astra config --bg "#0c0c0c"        # Set background color manually
+astra config --save-dir <path>     # Set default save directory
+astra config --clear-cache         # Clear cached images
 astra config --reset               # Reset all settings to defaults
 ```
 

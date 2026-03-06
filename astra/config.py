@@ -210,7 +210,7 @@ def _uninstall_from_profile(profile_path: Path) -> None:
 
 
 def fetch_archive() -> str:
-    """Fetch archive HTML with 24h cache."""
+    """Fetch archive HTML"""
     if ARCHIVE_FILE.exists():
         mtime = datetime.fromtimestamp(ARCHIVE_FILE.stat().st_mtime)
         if datetime.now() - mtime < timedelta(hours=24):
@@ -230,7 +230,7 @@ def fetch_archive() -> str:
 
 
 def parse_archive(html: str) -> list[tuple[str, str]]:
-    """Parse archive HTML into list of (date_str, title) tuples."""
+    """Parse archive HTML into list of tuples"""
     # Pattern: 2026 March 06:  <a href="ap260306.html">The Astrosphere of HD 61005</a>
     pattern = r"(\d{4} \w+ \d{1,2}):\s+<a href=\"ap\d{6}\.html\">(.*?)</a>"
     matches = re.findall(pattern, html)
@@ -238,7 +238,7 @@ def parse_archive(html: str) -> list[tuple[str, str]]:
 
 
 def search_archive(query: str) -> list[tuple[str, str]]:
-    """Search archive titles for query. Returns newest first."""
+    """Search archive titles for query. Returns newest first"""
     html = fetch_archive()
     entries = parse_archive(html)
     query = query.lower()

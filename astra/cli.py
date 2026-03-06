@@ -86,7 +86,7 @@ def _get_ext_from_url(url: str) -> str:
 
 
 def _download_image(url: str, date: str, use_cache: bool = True) -> bytes:
-    """Download image with caching. Returns raw image bytes."""
+    """Download image with caching. Returns raw image bytes"""
     ext = _get_ext_from_url(url)
 
     if use_cache:
@@ -280,7 +280,7 @@ def random(
         None, "--bg", help="Background color in hex (e.g., '#0c0c0c')."
     ),
 ) -> None:
-    """Fetch a random APOD imagE"""
+    """Fetch a random APOD image"""
     config = load_config()
     size = size or config.get("size", "default")
     bg = bg or config.get("bg")
@@ -428,13 +428,10 @@ def save() -> None:
 
 
 def _parse_archive_date(date_str: str) -> str:
-    """Convert '2026 March 06' to '2026-03-06'."""
     try:
         dt = datetime.datetime.strptime(date_str, "%Y %B %d")
         return dt.strftime("%Y-%m-%d")
     except ValueError:
-        # Fallback for older entries with potentially different formats
-        # Archive seems consistent, but safety first
         return date_str
 
 
@@ -448,7 +445,7 @@ def search(
         None, "--bg", help="Background color in hex (e.g., '#0c0c0c')."
     ),
 ) -> None:
-    """Search the APOD archive by title."""
+    """Search the APOD archive by title"""
     try:
         with console.status(f"[cyan]Searching for '{query}'..."):
             results = search_archive(query)
@@ -523,7 +520,7 @@ def config_cmd(
     reset: bool = typer.Option(False, "--reset", help="Reset config to defaults."),
     show: bool = typer.Option(False, "--show", help="Show current config."),
 ) -> None:
-    """Manage Astra configuration."""
+    """Manage Astra configuration"""
     if reset:
         config = load_config()
         save_config(
