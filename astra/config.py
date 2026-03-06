@@ -2,15 +2,21 @@
 
 import json
 import os
+import re
 import sys
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import requests
+
 CONFIG_DIR = Path.home() / ".astra"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 LAST_APOD_FILE = CONFIG_DIR / "last.json"
 CACHE_DIR = CONFIG_DIR / "cache"
+ARCHIVE_FILE = CONFIG_DIR / "archive.html"
+
+ARCHIVE_URL = "https://apod.nasa.gov/apod/archivepixFull.html"
 
 DEFAULT_CONFIG = {
     "size": "default",
@@ -86,13 +92,13 @@ def load_last_apod() -> dict | None:
 
 
 def get_cache_path(date: str, ext: str) -> Path:
-    """Return the path for a cached image."""
+    """Return the path for a cached image"""
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     return CACHE_DIR / f"{date}.{ext}"
 
 
 def get_cached_image(date: str, ext: str) -> bytes | None:
-    """Return cached image bytes if exists and not expired (14 days)."""
+    """Return cached image bytes if exists and not expired"""
     cache_path = get_cache_path(date, ext)
     if not cache_path.exists():
         return None
@@ -107,13 +113,13 @@ def get_cached_image(date: str, ext: str) -> bytes | None:
 
 
 def save_cached_image(date: str, ext: str, data: bytes) -> None:
-    """Save image data to cache."""
+    """Save image data to cache"""
     cache_path = get_cache_path(date, ext)
     cache_path.write_bytes(data)
 
 
 def cleanup_expired_cache(max_age_days: int = 14) -> int:
-    """Delete cached images older than max_age_days. Returns count of deleted files."""
+    """Delete cached images older than max_age_days. Returns count of deleted files"""
     if not CACHE_DIR.exists():
         return 0
 
@@ -129,7 +135,7 @@ def cleanup_expired_cache(max_age_days: int = 14) -> int:
 
 
 def clear_cache() -> tuple[int, int]:
-    """Clear all cached images. Returns (files_deleted, bytes_freed)."""
+    """Clear all cached images. Returns (files_deleted, bytes_freed)"""
     if not CACHE_DIR.exists():
         return 0, 0
 
@@ -201,6 +207,42 @@ def _uninstall_from_profile(profile_path: Path) -> None:
     profile_path.write_text(
         "\n".join(filtered) + "\n" if filtered else "", encoding="utf-8"
     )
+
+
+def fetch_archive() -> str:
+    """Fetch archive HTML with 24h cache."""
+    if ARCHIVE_FILE.exists():
+        mtime = datetime.fromtimestamp(ARCHIVE_FILE.stat().st_mtime)
+        if datetime.now() - mtime < timedelta(hours=24):
+            return ARCHIVE_FILE.read_text(encoding="utf-8", errors="ignore")
+
+    try:
+        response = requests.get(ARCHIVE_URL, timeout=15)
+        response.raise_for_status()
+        html = response.text
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        ARCHIVE_FILE.write_text(html, encoding="utf-8", errors="ignore")
+        return html
+    except requests.RequestException:
+        if ARCHIVE_FILE.exists():
+            return ARCHIVE_FILE.read_text(encoding="utf-8", errors="ignore")
+        raise
+
+
+def parse_archive(html: str) -> list[tuple[str, str]]:
+    """Parse archive HTML into list of (date_str, title) tuples."""
+    # Pattern: 2026 March 06:  <a href="ap260306.html">The Astrosphere of HD 61005</a>
+    pattern = r"(\d{4} \w+ \d{1,2}):\s+<a href=\"ap\d{6}\.html\">(.*?)</a>"
+    matches = re.findall(pattern, html)
+    return matches
+
+
+def search_archive(query: str) -> list[tuple[str, str]]:
+    """Search archive titles for query. Returns newest first."""
+    html = fetch_archive()
+    entries = parse_archive(html)
+    query = query.lower()
+    return [e for e in entries if query in e[1].lower()]
 
 
 def _install_cmd_autorun() -> None:

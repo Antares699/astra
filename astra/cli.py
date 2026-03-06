@@ -27,6 +27,7 @@ from astra.config import (
     save_cached_image,
     cleanup_expired_cache,
     clear_cache,
+    search_archive,
     VALID_SHELLS,
 )
 from astra.sixel import image_to_sixel, hex_to_rgb, supports_sixel
@@ -119,7 +120,7 @@ def _detect_renderer() -> str:
 
 
 def render_image(img: Image.Image, size: str, term_width: int, bg: str) -> bool:
-    """Render a PIL Image to the terminal."""
+    """Render a PIL Image to the terminal"""
     render_width = term_width if size == "full" else int(term_width * 0.6)
     bg_color = hex_to_rgb(bg) if bg else None
     renderer = _detect_renderer()
@@ -156,7 +157,7 @@ def render_image(img: Image.Image, size: str, term_width: int, bg: str) -> bool:
 
 
 def display_apod(data: dict, size: str, bg: str) -> None:
-    """Display an APOD data dictionary."""
+    """Display an APOD data dictionary"""
     title = data.get("title", "No Title")
     date = data.get("date", "Unknown Date")
     header = Text(justify="center")
@@ -373,7 +374,7 @@ def greet() -> None:
 
 @app.command()
 def save() -> None:
-    """Save the last viewed APOD image to disk."""
+    """Save the last viewed APOD"""
     last = load_last_apod()
     if not last:
         console.print(
@@ -424,6 +425,73 @@ def save() -> None:
         f.write(img_data)
 
     console.print(f"[green]Saved: {filepath}[/green]")
+
+
+def _parse_archive_date(date_str: str) -> str:
+    """Convert '2026 March 06' to '2026-03-06'."""
+    try:
+        dt = datetime.datetime.strptime(date_str, "%Y %B %d")
+        return dt.strftime("%Y-%m-%d")
+    except ValueError:
+        # Fallback for older entries with potentially different formats
+        # Archive seems consistent, but safety first
+        return date_str
+
+
+@app.command()
+def search(
+    query: str = typer.Argument(..., help="Search APOD titles."),
+    size: str = typer.Option(
+        None, "--size", "-s", help="Image size: 'default' (60%) or 'full'."
+    ),
+    bg: str = typer.Option(
+        None, "--bg", help="Background color in hex (e.g., '#0c0c0c')."
+    ),
+) -> None:
+    """Search the APOD archive by title."""
+    try:
+        with console.status(f"[cyan]Searching for '{query}'..."):
+            results = search_archive(query)
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] Could not fetch archive: {e}")
+        raise typer.Exit(code=1)
+
+    if not results:
+        console.print(f"[yellow]No results found for '{query}'.[/yellow]")
+        return
+
+    total = len(results)
+    shown = results[:10]
+
+    console.print()
+    console.print(f"  [bold]Found {total} matches for '{query}':[/bold]")
+    console.print()
+
+    for i, (date_str, title) in enumerate(shown, 1):
+        api_date = _parse_archive_date(date_str)
+        console.print(
+            f"  [cyan]{i:>2}.[/cyan] [bold]{title:<40}[/bold] [dim]{api_date}[/dim]"
+        )
+
+    if total > 10:
+        console.print(f"\n  [dim]... and {total - 10} more matches.[/dim]")
+
+    console.print()
+    choice = typer.prompt("Enter number to view (or 'q' to quit)", default="q")
+
+    if choice.lower() == "q":
+        return
+
+    try:
+        idx = int(choice) - 1
+        if 0 <= idx < len(shown):
+            date_str, _ = shown[idx]
+            api_date = _parse_archive_date(date_str)
+            run_apod(size, bg, date=api_date)
+        else:
+            console.print("[red]Invalid selection.[/red]")
+    except ValueError:
+        console.print("[red]Please enter a valid number.[/red]")
 
 
 @app.command("config")
