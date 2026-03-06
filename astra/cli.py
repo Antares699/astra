@@ -23,6 +23,10 @@ from astra.config import (
     validate_shell,
     install_greeter,
     uninstall_greeter,
+    get_cached_image,
+    save_cached_image,
+    cleanup_expired_cache,
+    clear_cache,
     VALID_SHELLS,
 )
 from astra.sixel import image_to_sixel, hex_to_rgb, supports_sixel
@@ -71,6 +75,32 @@ def fetch_apod(api_key: str, **params) -> dict:
     )
     response.raise_for_status()
     return response.json()
+
+
+def _get_ext_from_url(url: str) -> str:
+    """Get file extension from URL."""
+    if url.lower().endswith(".png"):
+        return "png"
+    return "jpg"
+
+
+def _download_image(url: str, date: str, use_cache: bool = True) -> bytes:
+    """Download image with caching. Returns raw image bytes."""
+    ext = _get_ext_from_url(url)
+
+    if use_cache:
+        cached = get_cached_image(date, ext)
+        if cached:
+            return cached
+
+    response = requests.get(url, timeout=30)
+    response.raise_for_status()
+    data = response.content
+
+    if use_cache:
+        save_cached_image(date, ext, data)
+
+    return data
 
 
 def _detect_renderer() -> str:
@@ -136,6 +166,7 @@ def display_apod(data: dict, size: str, bg: str) -> None:
     console.print(Panel(header, border_style="blue"))
 
     term_width = console.width
+    date = data.get("date", "")
 
     if data.get("media_type") == "video":
         video_url = data.get("url", "")
@@ -143,9 +174,8 @@ def display_apod(data: dict, size: str, bg: str) -> None:
 
         if thumb_url:
             try:
-                img_response = requests.get(thumb_url, timeout=30)
-                img_response.raise_for_status()
-                img = Image.open(BytesIO(img_response.content))
+                img_data = _download_image(thumb_url, date, use_cache=False)
+                img = Image.open(BytesIO(img_data))
                 fallback = not render_image(img, size, term_width, bg)
             except requests.RequestException:
                 fallback = True
@@ -159,8 +189,7 @@ def display_apod(data: dict, size: str, bg: str) -> None:
     else:
         image_url = data.get("hdurl") or data.get("url", "")
         try:
-            img_response = requests.get(image_url, timeout=30)
-            img_response.raise_for_status()
+            img_data = _download_image(image_url, date)
         except requests.RequestException:
             console.print(
                 f"\n  Could not download image: [underline blue]{image_url}[/underline blue]"
@@ -168,7 +197,7 @@ def display_apod(data: dict, size: str, bg: str) -> None:
             save_last_apod(data)
             return
 
-        img = Image.open(BytesIO(img_response.content))
+        img = Image.open(BytesIO(img_data))
         fallback = not render_image(img, size, term_width, bg)
 
         if fallback:
@@ -187,6 +216,9 @@ def display_apod(data: dict, size: str, bg: str) -> None:
 
 def run_apod(size: str | None, bg: str | None, **api_params) -> None:
     """Logic for fetching and displaying an APOD"""
+    # Clean up expired cache entries
+    cleanup_expired_cache(max_age_days=14)
+
     config = load_config()
     size = size or config.get("size", "default")
     bg = bg or config.get("bg")
@@ -339,6 +371,61 @@ def greet() -> None:
         pass  # Fail silently in greeter
 
 
+@app.command()
+def save() -> None:
+    """Save the last viewed APOD image to disk."""
+    last = load_last_apod()
+    if not last:
+        console.print(
+            "[bold yellow]No APOD viewed yet.[/bold yellow] Run `astra` first."
+        )
+        raise typer.Exit(code=1)
+
+    config = load_config()
+    save_dir = config.get("save_dir")
+
+    if not save_dir:
+        console.print()
+        console.print("[yellow]No save directory configured.[/yellow]")
+        save_dir = typer.prompt(
+            "Where should Astra save images? (e.g., ~/Pictures/Astra)"
+        )
+        save_dir = os.path.expanduser(save_dir)
+        config["save_dir"] = save_dir
+        save_config(config)
+        console.print(f"[green]Save directory set to: {save_dir}[/green]")
+
+    date = last.get("date", "")
+    if not date:
+        console.print("[bold red]Error:[/bold red] No date found in last APOD.")
+        raise typer.Exit(code=1)
+
+    image_url = last.get("hdurl") or last.get("url", "")
+    if not image_url:
+        console.print("[bold red]Error:[/bold red] No image URL found in last APOD.")
+        raise typer.Exit(code=1)
+
+    ext = _get_ext_from_url(image_url)
+    filename = f"{date}.{ext}"
+    filepath = os.path.join(save_dir, filename)
+
+    if os.path.exists(filepath):
+        console.print(f"[yellow]Already saved: {filepath}[/yellow]")
+        return
+
+    try:
+        img_data = _download_image(image_url, date)
+    except requests.RequestException as e:
+        console.print(f"[bold red]Error downloading:[/bold red] {e}")
+        raise typer.Exit(code=1)
+
+    os.makedirs(save_dir, exist_ok=True)
+    with open(filepath, "wb") as f:
+        f.write(img_data)
+
+    console.print(f"[green]Saved: {filepath}[/green]")
+
+
 @app.command("config")
 def config_cmd(
     size: str = typer.Option(
@@ -359,6 +446,12 @@ def config_cmd(
         "--shell",
         help=f"Shell to install/uninstall greeter: {', '.join(VALID_SHELLS)}.",
     ),
+    save_dir: str = typer.Option(
+        None, "--save-dir", help="Set default save directory for images."
+    ),
+    clear_cache: bool = typer.Option(
+        False, "--clear-cache", help="Clear all cached images."
+    ),
     reset: bool = typer.Option(False, "--reset", help="Reset config to defaults."),
     show: bool = typer.Option(False, "--show", help="Show current config."),
 ) -> None:
@@ -371,11 +464,20 @@ def config_cmd(
                 "bg": None,
                 "greeter": False,
                 "greeter_freq": "daily",
-                "api_key": config.get("api_key"),  # preserve existing key
+                "api_key": config.get("api_key"),
                 "greeter_last_run": config.get("greeter_last_run"),
+                "save_dir": config.get("save_dir"),
             }
         )
         console.print("[green]Config reset to defaults.[/green]")
+        return
+
+    if clear_cache:
+        deleted, freed = clear_cache()
+        freed_mb = freed / (1024 * 1024)
+        console.print(
+            f"[green]Cleared {deleted} cached images ({freed_mb:.2f} MB).[/green]"
+        )
         return
 
     if show:
@@ -393,6 +495,7 @@ def config_cmd(
         console.print(f"  bg: {config.get('bg') or 'auto-detect'}")
         console.print(f"  greeter: {'on' if config.get('greeter') else 'off'}")
         console.print(f"  greeter_freq: {config.get('greeter_freq', 'daily')}")
+        console.print(f"  save_dir: {config.get('save_dir') or 'not set'}")
         return
 
     config = load_config()
@@ -424,6 +527,12 @@ def config_cmd(
         changed = True
         console.print(f"[green]Set greeter_freq = {greeter_freq}[/green]")
 
+    if save_dir is not None:
+        save_dir = os.path.expanduser(save_dir)
+        config["save_dir"] = save_dir
+        changed = True
+        console.print(f"[green]Set save_dir = {save_dir}[/green]")
+
     if greeter is not None:
         if greeter not in ("on", "off"):
             console.print("[red]Error: greeter must be 'on' or 'off'[/red]")
@@ -453,8 +562,10 @@ def config_cmd(
     if not changed:
         console.print("Usage: astra config --api-key <key>")
         console.print("       astra config --size <default|full> --bg <hex_color>")
+        console.print("       astra config --save-dir <path>")
         console.print("       astra config --greeter <on|off> --shell <shell>")
         console.print("       astra config --greeter-freq <daily|always>")
+        console.print("       astra config --clear-cache")
         console.print("       astra config --show")
         console.print("       astra config --reset")
     else:

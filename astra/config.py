@@ -1,12 +1,16 @@
 """Config management for Astra"""
 
 import json
+import os
 import sys
+import time
+from datetime import datetime, timedelta
 from pathlib import Path
 
 CONFIG_DIR = Path.home() / ".astra"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 LAST_APOD_FILE = CONFIG_DIR / "last.json"
+CACHE_DIR = CONFIG_DIR / "cache"
 
 DEFAULT_CONFIG = {
     "size": "default",
@@ -15,6 +19,7 @@ DEFAULT_CONFIG = {
     "greeter_freq": "daily",
     "api_key": None,
     "greeter_last_run": None,
+    "save_dir": None,
 }
 
 GREETER_TAG = "# astra-greeter"
@@ -78,6 +83,64 @@ def load_last_apod() -> dict | None:
             return json.load(f)
     except (json.JSONDecodeError, IOError):
         return None
+
+
+def get_cache_path(date: str, ext: str) -> Path:
+    """Return the path for a cached image."""
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    return CACHE_DIR / f"{date}.{ext}"
+
+
+def get_cached_image(date: str, ext: str) -> bytes | None:
+    """Return cached image bytes if exists and not expired (14 days)."""
+    cache_path = get_cache_path(date, ext)
+    if not cache_path.exists():
+        return None
+
+    # Check if older than 14 days
+    mtime = datetime.fromtimestamp(cache_path.stat().st_mtime)
+    if datetime.now() - mtime > timedelta(days=14):
+        cache_path.unlink()
+        return None
+
+    return cache_path.read_bytes()
+
+
+def save_cached_image(date: str, ext: str, data: bytes) -> None:
+    """Save image data to cache."""
+    cache_path = get_cache_path(date, ext)
+    cache_path.write_bytes(data)
+
+
+def cleanup_expired_cache(max_age_days: int = 14) -> int:
+    """Delete cached images older than max_age_days. Returns count of deleted files."""
+    if not CACHE_DIR.exists():
+        return 0
+
+    deleted = 0
+    now = datetime.now()
+    for f in CACHE_DIR.iterdir():
+        if f.is_file():
+            mtime = datetime.fromtimestamp(f.stat().st_mtime)
+            if now - mtime > timedelta(days=max_age_days):
+                f.unlink()
+                deleted += 1
+    return deleted
+
+
+def clear_cache() -> tuple[int, int]:
+    """Clear all cached images. Returns (files_deleted, bytes_freed)."""
+    if not CACHE_DIR.exists():
+        return 0, 0
+
+    total_bytes = 0
+    deleted = 0
+    for f in CACHE_DIR.iterdir():
+        if f.is_file():
+            total_bytes += f.stat().st_size
+            f.unlink()
+            deleted += 1
+    return deleted, total_bytes
 
 
 def _get_profile_path(shell: str) -> Path | None:
