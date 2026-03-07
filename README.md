@@ -14,6 +14,7 @@ NASA's Astronomy Picture of the Day, rendered directly in your terminal.
 - Browse by date, view random APODs, read full explanations
 - Search all APOD titles from APOD Archive
 - Save HD images of APODs
+- Works out of the box with DEMO_KEY
 
 ## Install
 

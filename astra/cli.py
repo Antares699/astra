@@ -40,8 +40,8 @@ app = typer.Typer()
 console = Console()
 
 
-def _get_api_key(interactive: bool = True) -> str | None:
-    """Get NASA API key"""
+def _get_api_key() -> str:
+    """Get NASA API key. Falls back to DEMO_KEY"""
     config = load_config()
 
     if config.get("api_key"):
@@ -51,22 +51,7 @@ def _get_api_key(interactive: bool = True) -> str | None:
     if env_key:
         return env_key
 
-    if not interactive:
-        return None
-
-    console.print()
-    console.print("[yellow]No NASA API key found.[/yellow]")
-    console.print(
-        "Get a free key at: [underline blue]https://api.nasa.gov[/underline blue]"
-    )
-    console.print()
-    api_key = typer.prompt("Enter your API key")
-
-    config["api_key"] = api_key
-    save_config(config)
-    console.print("[green]API key saved successfully![/green]")
-    console.print()
-    return api_key
+    return "DEMO_KEY"
 
 
 def fetch_apod(api_key: str, **params) -> dict:
@@ -74,12 +59,21 @@ def fetch_apod(api_key: str, **params) -> dict:
     response = requests.get(
         APOD_URL, params={"api_key": api_key, "thumbs": True, **params}, timeout=10
     )
+    if response.status_code == 429:
+        console.print("[bold red]Error:[/bold red] API rate limit exceeded.")
+        console.print(
+            "Set your own key: [cyan]astra config --api-key <key>[/cyan]"
+        )
+        console.print(
+            "Get a free key at: [underline blue]https://api.nasa.gov[/underline blue]"
+        )
+        raise typer.Exit(code=1)
     response.raise_for_status()
     return response.json()
 
 
 def _get_ext_from_url(url: str) -> str:
-    """Get file extension from URL."""
+    """Get file extension from URL"""
     if url.lower().endswith(".png"):
         return "png"
     return "jpg"
@@ -224,9 +218,7 @@ def run_apod(size: str | None, bg: str | None, **api_params) -> None:
     size = size or config.get("size", "default")
     bg = bg or config.get("bg")
 
-    api_key = _get_api_key(interactive=True)
-    if not api_key:
-        raise typer.Exit(code=1)
+    api_key = _get_api_key()
 
     try:
         data = fetch_apod(api_key, **api_params)
@@ -285,9 +277,7 @@ def random(
     size = size or config.get("size", "default")
     bg = bg or config.get("bg")
 
-    api_key = _get_api_key(interactive=True)
-    if not api_key:
-        raise typer.Exit(code=1)
+    api_key = _get_api_key()
 
     try:
         results = fetch_apod(api_key, count=5)
@@ -354,9 +344,7 @@ def greet() -> None:
 
     # Show today's APOD
     try:
-        api_key = _get_api_key(interactive=False)
-        if not api_key:
-            return
+        api_key = _get_api_key()
 
         config = load_config()
         size = config.get("size", "default")
