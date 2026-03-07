@@ -57,7 +57,7 @@ def _get_api_key() -> str:
 def fetch_apod(api_key: str, **params) -> dict:
     """Fetch APOD data from NASA API"""
     response = requests.get(
-        APOD_URL, params={"api_key": api_key, "thumbs": True, **params}, timeout=10
+        APOD_URL, params={"api_key": api_key, "thumbs": True, **params}, timeout=20
     )
     if response.status_code == 429:
         console.print("[bold red]Error:[/bold red] API rate limit exceeded.")
@@ -223,15 +223,22 @@ def run_apod(size: str | None, bg: str | None, **api_params) -> None:
     try:
         data = fetch_apod(api_key, **api_params)
     except requests.RequestException as exc:
-        console.print(f"[bold red]Error:[/bold red] {exc}")
+        console.print(f"[bold red]Error:[/bold red] Could not reach NASA API. Check your connection.")
         raise typer.Exit(code=1)
 
     display_apod(data, size, bg)
 
 
 @app.callback(invoke_without_command=True)
-def main_callback(ctx: typer.Context) -> None:
+def main_callback(
+    ctx: typer.Context,
+    version: bool = typer.Option(None, "--version", "-v", help="Show version."),
+) -> None:
     """Default: show today's APOD"""
+    if version:
+        from astra import __version__
+        console.print(f"astra {__version__}")
+        raise typer.Exit()
     if ctx.invoked_subcommand is None:
         run_apod(None, None)
 
@@ -260,6 +267,12 @@ def date(
     ),
 ) -> None:
     """Fetch APOD for a specific date"""
+    # Validate date format
+    try:
+        datetime.datetime.strptime(date, "%Y-%m-%d")
+    except ValueError:
+        console.print("[bold red]Error:[/bold red] Invalid date format. Use YYYY-MM-DD (e.g., 2021-08-14).")
+        raise typer.Exit(code=1)
     run_apod(size, bg, date=date)
 
 
@@ -282,7 +295,7 @@ def random(
     try:
         results = fetch_apod(api_key, count=5)
     except requests.RequestException as exc:
-        console.print(f"[bold red]Error:[/bold red] {exc}")
+        console.print("[bold red]Error:[/bold red] Could not reach NASA API. Check your connection.")
         raise typer.Exit(code=1)
 
     if isinstance(results, dict):
@@ -405,7 +418,7 @@ def save() -> None:
     try:
         img_data = _download_image(image_url, date)
     except requests.RequestException as e:
-        console.print(f"[bold red]Error downloading:[/bold red] {e}")
+        console.print("[bold red]Error:[/bold red] Could not download image. Check your connection.")
         raise typer.Exit(code=1)
 
     os.makedirs(save_dir, exist_ok=True)
