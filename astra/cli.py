@@ -41,11 +41,12 @@ console = Console()
 
 
 def _get_api_key() -> str:
-    """Get NASA API key. Falls back to DEMO_KEY"""
+    """Get NASA API key. Falls back to DEMO_KEY."""
     config = load_config()
 
-    if config.get("api_key"):
-        return config["api_key"]
+    stored_key = config.get("api_key")
+    if stored_key and stored_key.strip() and " " not in stored_key:
+        return stored_key
 
     env_key = os.getenv("NASA_API_KEY")
     if env_key:
