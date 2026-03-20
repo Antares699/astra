@@ -8,13 +8,12 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
-import requests
-
 CONFIG_DIR = Path.home() / ".astra"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 LAST_APOD_FILE = CONFIG_DIR / "last.json"
 CACHE_DIR = CONFIG_DIR / "cache"
 ARCHIVE_FILE = CONFIG_DIR / "archive.html"
+ARCHIVE_META_FILE = CONFIG_DIR / "archive_meta.json"
 
 ARCHIVE_URL = "https://apod.nasa.gov/apod/archivepixFull.html"
 
@@ -209,19 +208,64 @@ def _uninstall_from_profile(profile_path: Path) -> None:
     )
 
 
+def _load_archive_meta() -> dict:
+    """Load cached HTTP headers (ETag, Last-Modified) for the archive."""
+    if not ARCHIVE_META_FILE.exists():
+        return {}
+    try:
+        with open(ARCHIVE_META_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, IOError):
+        return {}
+
+
+def _save_archive_meta(meta: dict) -> None:
+    """Save HTTP headers for conditional caching."""
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    with open(ARCHIVE_META_FILE, "w", encoding="utf-8") as f:
+        json.dump(meta, f, indent=2)
+        f.write("\n")
+
+
 def fetch_archive() -> str:
-    """Fetch archive HTML"""
+    """Fetch archive HTML with HTTP conditional caching."""
+    import requests  
+
     if ARCHIVE_FILE.exists():
         mtime = datetime.fromtimestamp(ARCHIVE_FILE.stat().st_mtime)
-        if datetime.now() - mtime < timedelta(hours=24):
+        if datetime.now() - mtime < timedelta(hours=1):
             return ARCHIVE_FILE.read_text(encoding="utf-8", errors="ignore")
 
+    # Build conditional request headers from saved metadata
+    meta = _load_archive_meta()
+    headers = {}
+    if meta.get("etag"):
+        headers["If-None-Match"] = meta["etag"]
+    if meta.get("last_modified"):
+        headers["If-Modified-Since"] = meta["last_modified"]
+
     try:
-        response = requests.get(ARCHIVE_URL, timeout=15)
+        response = requests.get(ARCHIVE_URL, headers=headers, timeout=15)
+
+        if response.status_code == 304 and ARCHIVE_FILE.exists():
+            ARCHIVE_FILE.touch()
+            return ARCHIVE_FILE.read_text(encoding="utf-8", errors="ignore")
+
         response.raise_for_status()
         html = response.text
+
+        # Save the HTML and update cached headers
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         ARCHIVE_FILE.write_text(html, encoding="utf-8", errors="ignore")
+
+        new_meta = {}
+        if response.headers.get("ETag"):
+            new_meta["etag"] = response.headers["ETag"]
+        if response.headers.get("Last-Modified"):
+            new_meta["last_modified"] = response.headers["Last-Modified"]
+        if new_meta:
+            _save_archive_meta(new_meta)
+
         return html
     except requests.RequestException:
         if ARCHIVE_FILE.exists():

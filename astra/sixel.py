@@ -4,7 +4,6 @@ import re
 import sys
 import time
 
-import numpy as np
 from PIL import Image
 
 
@@ -114,7 +113,6 @@ def image_to_sixel(
     term_columns: int,
     bg_color: tuple[int, int, int] | None = None,
 ) -> str:
-   
     cell_width, _ = get_cell_size()
     if bg_color is None:
         bg_color = get_background_color()
@@ -139,10 +137,13 @@ def image_to_sixel(
     quantized = canvas.quantize(colors=256, method=Image.MEDIANCUT)
     palette = quantized.getpalette()
     width, height = quantized.size
-    pixels = np.array(quantized.getdata(), dtype=np.uint8).reshape(height, width)
+
+    # Pure Python pixel grid — flat list sliced into rows
+    flat_pixels = list(quantized.getdata())
+    pixels = [flat_pixels[y * width : (y + 1) * width] for y in range(height)]
 
     # Force exact background color in palette to avoid quantization drift
-    bg_pixel_index = int(pixels[0, 0])
+    bg_pixel_index = pixels[0][0]
     palette[bg_pixel_index * 3] = bg_color[0]
     palette[bg_pixel_index * 3 + 1] = bg_color[1]
     palette[bg_pixel_index * 3 + 2] = bg_color[2]
@@ -151,23 +152,25 @@ def image_to_sixel(
 
     # Define palette — round to nearest SIXEL value (0-100 scale)
     num_colors = len(palette) // 3
-    pal_array = np.array(palette[: num_colors * 3], dtype=np.int16).reshape(-1, 3)
-    pal_scaled = np.round(pal_array * 100 / 255).astype(np.int16)
     for i in range(num_colors):
-        parts.append(f"#{i};2;{pal_scaled[i, 0]};{pal_scaled[i, 1]};{pal_scaled[i, 2]}")
+        r = round(palette[i * 3] * 100 / 255)
+        g = round(palette[i * 3 + 1] * 100 / 255)
+        b = round(palette[i * 3 + 2] * 100 / 255)
+        parts.append(f"#{i};2;{r};{g};{b}")
 
-    # Precompute powers for SIXEL bit encoding: [1, 2, 4, 8, 16, 32]
-    powers = np.array([1, 2, 4, 8, 16, 32], dtype=np.uint8)
+    # Precompute powers for SIXEL bit encoding
+    powers = (1, 2, 4, 8, 16, 32)
 
     # Encode pixel data in 6-row bands
     for band_top in range(0, height, 6):
-        band = pixels[band_top : band_top + 6, :]  
+        band = pixels[band_top : band_top + 6]
 
-        if band.shape[0] < 6:
-            pad = np.zeros((6 - band.shape[0], width), dtype=np.uint8)
-            band = np.vstack([band, pad])
+        # Pad short bands with zeros
+        while len(band) < 6:
+            band.append([0] * width)
 
-        colors_in_band = np.unique(band)
+        # Find unique colors in this band
+        colors_in_band = sorted({px for row in band for px in row})
 
         first = True
         for color_idx in colors_in_band:
@@ -176,17 +179,23 @@ def image_to_sixel(
             first = False
             parts.append(f"#{color_idx}")
 
-            mask = band == color_idx
-            vals = (mask * powers[:, np.newaxis]).sum(axis=0) + 63
-            chars = vals.astype(np.uint8).tobytes().decode("ascii")
+            # Compute SIXEL values for this color across all columns
+            chars = []
+            for x in range(width):
+                val = 0
+                for bit in range(6):
+                    if band[bit][x] == color_idx:
+                        val |= powers[bit]
+                chars.append(chr(val + 63))
 
             # RLE compression
+            char_str = "".join(chars)
             i = 0
-            n = len(chars)
+            n = len(char_str)
             while i < n:
-                ch = chars[i]
+                ch = char_str[i]
                 count = 1
-                while i + count < n and chars[i + count] == ch:
+                while i + count < n and char_str[i + count] == ch:
                     count += 1
                 parts.append(f"!{count}{ch}" if count > 3 else ch * count)
                 i += count

@@ -6,9 +6,7 @@ import re
 import sys
 from io import BytesIO
 
-import requests
 import typer
-from PIL import Image
 from rich.console import Console
 from rich.markup import escape
 from rich.panel import Panel
@@ -30,9 +28,6 @@ from astra.config import (
     search_archive,
     VALID_SHELLS,
 )
-from astra.sixel import image_to_sixel, hex_to_rgb, supports_sixel
-from astra.blockimg import image_to_blocks
-from astra.kitty import image_to_kitty
 
 APOD_URL = "https://api.nasa.gov/planetary/apod"
 
@@ -57,14 +52,14 @@ def _get_api_key() -> str:
 
 def fetch_apod(api_key: str, **params) -> dict:
     """Fetch APOD data from NASA API"""
+    import requests 
+
     response = requests.get(
         APOD_URL, params={"api_key": api_key, "thumbs": True, **params}, timeout=20
     )
     if response.status_code == 429:
         console.print("[bold red]Error:[/bold red] API rate limit exceeded.")
-        console.print(
-            "Set your own key: [cyan]astra config --api-key <key>[/cyan]"
-        )
+        console.print("Set your own key: [cyan]astra config --api-key <key>[/cyan]")
         console.print(
             "Get a free key at: [underline blue]https://api.nasa.gov[/underline blue]"
         )
@@ -82,6 +77,8 @@ def _get_ext_from_url(url: str) -> str:
 
 def _download_image(url: str, date: str, use_cache: bool = True) -> bytes:
     """Download image with caching. Returns raw image bytes"""
+    import requests  
+
     ext = _get_ext_from_url(url)
 
     if use_cache:
@@ -108,14 +105,18 @@ def _detect_renderer() -> str:
     if sys.platform == "win32":
         return "sixel"
 
+    from astra.sixel import supports_sixel 
+
     if supports_sixel():
         return "sixel"
 
     return "block"
 
 
-def render_image(img: Image.Image, size: str, term_width: int, bg: str) -> bool:
+def render_image(img, size: str, term_width: int, bg: str) -> bool:
     """Render a PIL Image to the terminal"""
+    from astra.sixel import hex_to_rgb  
+
     render_width = term_width if size == "full" else int(term_width * 0.6)
     bg_color = hex_to_rgb(bg) if bg else None
     renderer = _detect_renderer()
@@ -125,6 +126,8 @@ def render_image(img: Image.Image, size: str, term_width: int, bg: str) -> bool:
     # Path 1: Kitty protocol
     if renderer == "kitty":
         try:
+            from astra.kitty import image_to_kitty  # Lazy
+
             kitty_data = image_to_kitty(img, render_width, term_width)
             sys.stdout.write("\r" + kitty_data)
             sys.stdout.flush()
@@ -135,6 +138,8 @@ def render_image(img: Image.Image, size: str, term_width: int, bg: str) -> bool:
     # Path 2: SIXEL protocol
     if renderer in ("kitty", "sixel"):
         try:
+            from astra.sixel import image_to_sixel  # Lazy
+
             sixel_data = image_to_sixel(img, render_width, term_width, bg_color)
             sys.stdout.write("\r" + sixel_data)
             sys.stdout.flush()
@@ -143,6 +148,8 @@ def render_image(img: Image.Image, size: str, term_width: int, bg: str) -> bool:
             pass  # Fall through to block
 
     # Path 3: Block characters
+    from astra.blockimg import image_to_blocks  # Lazy
+
     output = image_to_blocks(img, render_width)
     padding = " " * ((term_width - render_width) // 2)
     centered = "\n".join(padding + line for line in output.split("\n"))
@@ -153,6 +160,8 @@ def render_image(img: Image.Image, size: str, term_width: int, bg: str) -> bool:
 
 def display_apod(data: dict, size: str, bg: str) -> None:
     """Display an APOD data dictionary"""
+    from PIL import Image  # Lazy: only needed when displaying images
+
     title = data.get("title", "No Title")
     date = data.get("date", "Unknown Date")
     header = Text(justify="center")
@@ -173,7 +182,7 @@ def display_apod(data: dict, size: str, bg: str) -> None:
                 img_data = _download_image(thumb_url, date, use_cache=False)
                 img = Image.open(BytesIO(img_data))
                 fallback = not render_image(img, size, term_width, bg)
-            except requests.RequestException:
+            except Exception:
                 fallback = True
         else:
             fallback = True
@@ -186,7 +195,7 @@ def display_apod(data: dict, size: str, bg: str) -> None:
         image_url = data.get("hdurl") or data.get("url", "")
         try:
             img_data = _download_image(image_url, date)
-        except requests.RequestException:
+        except Exception:
             console.print(
                 f"\n  Could not download image: [underline blue]{image_url}[/underline blue]"
             )
@@ -203,7 +212,7 @@ def display_apod(data: dict, size: str, bg: str) -> None:
         clean_text = re.sub(r"\s+", " ", copyright_text).strip()
         safe_text = escape(clean_text)
         console.print()
-        console.print(f"[dim italic]© {safe_text}[/dim italic]", justify="right")
+        console.print(f"[dim italic](c) {safe_text}[/dim italic]", justify="right")
 
     console.print()
 
@@ -223,8 +232,10 @@ def run_apod(size: str | None, bg: str | None, **api_params) -> None:
 
     try:
         data = fetch_apod(api_key, **api_params)
-    except requests.RequestException as exc:
-        console.print(f"[bold red]Error:[/bold red] Could not reach NASA API. Check your connection.")
+    except Exception:
+        console.print(
+            "[bold red]Error:[/bold red] Could not reach NASA API. Check your connection."
+        )
         raise typer.Exit(code=1)
 
     display_apod(data, size, bg)
@@ -238,6 +249,7 @@ def main_callback(
     """Default: show today's APOD"""
     if version:
         from astra import __version__
+
         console.print(f"astra {__version__}")
         raise typer.Exit()
     if ctx.invoked_subcommand is None:
@@ -272,7 +284,9 @@ def date(
     try:
         datetime.datetime.strptime(date, "%Y-%m-%d")
     except ValueError:
-        console.print("[bold red]Error:[/bold red] Invalid date format. Use YYYY-MM-DD (e.g., 2021-08-14).")
+        console.print(
+            "[bold red]Error:[/bold red] Invalid date format. Use YYYY-MM-DD (e.g., 2021-08-14)."
+        )
         raise typer.Exit(code=1)
     run_apod(size, bg, date=date)
 
@@ -295,8 +309,10 @@ def random(
 
     try:
         results = fetch_apod(api_key, count=5)
-    except requests.RequestException as exc:
-        console.print("[bold red]Error:[/bold red] Could not reach NASA API. Check your connection.")
+    except Exception:
+        console.print(
+            "[bold red]Error:[/bold red] Could not reach NASA API. Check your connection."
+        )
         raise typer.Exit(code=1)
 
     if isinstance(results, dict):
@@ -418,8 +434,10 @@ def save() -> None:
 
     try:
         img_data = _download_image(image_url, date)
-    except requests.RequestException as e:
-        console.print("[bold red]Error:[/bold red] Could not download image. Check your connection.")
+    except Exception:
+        console.print(
+            "[bold red]Error:[/bold red] Could not download image. Check your connection."
+        )
         raise typer.Exit(code=1)
 
     os.makedirs(save_dir, exist_ok=True)
